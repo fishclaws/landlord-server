@@ -73,7 +73,7 @@ export class AppService {
     let ownerString: string = property.owner.replaceAll('\'', '')
 
     let results = await this.searchBusinesses([ownerString], dataSource)
-
+    console.log(results)
     if (results.length == 0 || !results[0].json_build_object.business_owners) {
       if(ownerString.includes("&")) {
         const ownerStrings = ownerString.split("&").map(str => str.trim())
@@ -139,7 +139,12 @@ export class AppService {
   }
 
   async searchBusinesses(ownerString: string[], dataSource: DataSource) {
-    return await dataSource.query(searchBusinessQuery, [ownerString])
+    const queryRunner = dataSource.createQueryRunner()
+    await queryRunner.connect()
+    await queryRunner.manager.query(`SET pg_trgm.similarity_threshold = 0.8;`)
+    const result =  await queryRunner.manager.query(searchBusinessQuery, [ownerString])
+    await queryRunner.release()
+    return result;
 
   }
 

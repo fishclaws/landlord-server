@@ -33,16 +33,9 @@ export class AppController {
   async searchAddress(@Query('address') query: string): Promise<SearchResult> {
     query = sanitizeHtml(query)
 
-    console.log(query)
-    const value = await this.cacheManager.get(query);
-    console.log(value)
 
-    if (value) {
-      return value as SearchResult;
-    }
-    const result = await this.appService.searchAddress(query, this.dataSource)
-    await this.cacheManager.set(query, result)
-    return result
+    return await this.appService.searchAddress(query, this.dataSource)
+
   }
 
   @Get("find")

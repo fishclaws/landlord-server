@@ -7,8 +7,8 @@ business_owner AS (
   SELECT *
   FROM businesses
   JOIN search_terms st ON TRUE
-  WHERE SIMILARITY(replace(replace(replace(business_name, '.', ''), ',', ''), '''', ''), st.search_term) > 0.95
-  ORDER BY SIMILARITY(replace(replace(replace(business_name, '.', ''), ',', ''), '''', ''), st.search_term) DESC
+  WHERE replace(replace(replace(business_name, '.', ''), ',', ''), '''', '') % st.search_term
+  ORDER BY (1 - (replace(replace(replace(business_name, '.', ''), ',', ''), '''', '') <-> st.search_term)) DESC
 ),
 chains AS (
   SELECT jsonb_agg(levels) as levels, top_reg_num, top_last_name, top_first_name FROM (
@@ -162,7 +162,7 @@ related_businesses AS (
     LEFT JOIN business_names bn ON hr.reg_num = bn.reg_num
 ),
 owned_addresses AS (
-    SELECT DISTINCT a.*, po.owner
+    SELECT DISTINCT a.*, po.owner, po.market_value
     FROM (
         SELECT DISTINCT ON (business_name) * FROM (
             SELECT matched_property_owner, business_name
@@ -174,10 +174,15 @@ owned_addresses AS (
     ) related
     LEFT JOIN property_owners po ON
     related.matched_property_owner = po.owner OR
-    replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', '') = po.owner --OR 
+	replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', '') % po.owner
+    --replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', '') = po.owner --OR 
     --SIMILARITY(replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', ''), po.owner) > 0.85
     LEFT JOIN addresses a ON po.property_id = a.property_id
     WHERE a.unit IS NULL
+),
+market_value_sum AS (
+	SELECT SUM(values.market_value)
+	FROM (SELECT DISTINCT ON (market_value) market_value FROM owned_addresses) AS values
 ),
 unit_counts AS (
     SELECT jsonb_object_agg(units."property_id", "c") as unit_count_map
@@ -208,15 +213,15 @@ eviction_data AS (
 -- 			UNION
 -- 			SELECT bn2_name from related_businesses
         --UNION
-        SELECT DISTINCT ON (business_name) * FROM (
+		SELECT DISTINCT ON (business_name) * FROM (
             SELECT name as business_name from node_member_names
             UNION
             SELECT business_name FROM related_businesses
-        )
+        ) WHERE business_name IS NOT NULL
     ) rb
-    INNER JOIN evicting_landlords el ON similarity(el.landlord, rb.business_name) > .8
+    INNER JOIN evicting_landlords el ON el.landlord % rb.business_name
     INNER JOIN evictions e ON e.case_code = el.case_code
-    WHERE rb.business_name is NOT NULL AND e.case_code is NOT NULL
+    WHERE e.case_code is NOT NULL
 ),
 business_owner_result AS (
     SELECT jsonb_agg(DISTINCT(bo)) as obj
@@ -253,23 +258,27 @@ eviction_result AS (
     FROM eviction_data ed
     LIMIT 1
 )
+        
 SELECT json_build_object(
     'business_owners', business_owner_result.obj,
     'related_businesses', json_agg(DISTINCT(related)),
     'owned_addresses', ar.addresses_object,
     'locations', lr.locations_object,
     'hierarchy_nodes', hr.nodes_object,
-    --'evictions', er.evictions_object,
+    'evictions', er.evictions_object,
     'unit_counts', uc.unit_count_map,
-    'businesses_with_same_owners', bwso.arr
+    'businesses_with_same_owners', bwso.arr,
+	'market_value_sum', market_value_sum.sum
 )
 FROM business_owner_result
 LEFT JOIN related_businesses related ON true
 LEFT JOIN owned_addresses_result ar ON true
 LEFT JOIN locations_result lr ON true
 LEFT JOIN hierarchy_result hr ON true
---LEFT JOIN eviction_result er ON true
+LEFT JOIN eviction_result er ON true
 LEFT JOIN unit_counts uc ON true
 LEFT JOIN businesses_with_same_owners bwso ON true
-GROUP BY business_owner_result.obj, hr.nodes_object,  lr.locations_object, ar.addresses_object, uc.unit_count_map, bwso.arr--, er.evictions_object,
-LIMIT 1;`
+LEFT JOIN market_value_sum ON true
+GROUP BY business_owner_result.obj, hr.nodes_object,  lr.locations_object, ar.addresses_object, uc.unit_count_map, bwso.arr, er.evictions_object,market_value_sum.sum
+LIMIT 1;
+`
