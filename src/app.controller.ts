@@ -1,10 +1,11 @@
 declare function require(name: string): any;
 
-import { Controller, Get, Inject, Param, Query, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Ip, Param, Post, Query, UseInterceptors } from '@nestjs/common';
 import { AppService } from './app.service';
 import { DataSource } from 'typeorm';
 import * as sanitizeHtml from 'sanitize-html';
 import { CACHE_MANAGER, Cache, CacheInterceptor } from '@nestjs/cache-manager';
+import { Review } from './ReviewTypes';
 
 
 // async function parseAddressSync(address: string): Promise<any> {
@@ -44,6 +45,13 @@ export class AppController {
     const result = await this.appService.searchLandlord(query, this.dataSource)
     console.log(query)
     return result
+  }
+
+  @Post("submit-review")
+  async submitReview(@Ip() ip: string, @Body() review: Review) {
+    console.log(ip)
+    console.log(JSON.stringify(review, null, 2))
+    await this.appService.submitReview(ip, review, this.dataSource)
   }
 
 

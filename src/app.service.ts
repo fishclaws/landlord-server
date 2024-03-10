@@ -3,11 +3,13 @@ import { groupBy } from './util';
 import { DataSource } from 'typeorm';
 import { AddressParser } from '@sroussey/parse-address'
 import { searchBusinessQuery } from './queries/searchbusiness';
+import { Review } from './ReviewTypes';
 const addressParser = new AddressParser("us")
 var parseFullName = require('parse-full-name').parseFullName;
 
 @Injectable()
 export class AppService {
+
   async searchAddress(query: string, dataSource: DataSource): Promise<SearchResult> {
     query = query.replace('\'', '')
 
@@ -75,7 +77,7 @@ export class AppService {
     let results = await this.searchBusinesses([ownerString], dataSource)
     console.log(results)
     if (results.length == 0 || !results[0].json_build_object.business_owners) {
-      if(ownerString.includes("&")) {
+      if (ownerString.includes("&")) {
         const ownerStrings = ownerString.split("&").map(str => str.trim())
         results = await this.searchBusinesses(ownerStrings, dataSource)
         console.log(results)
@@ -90,7 +92,7 @@ export class AppService {
     }
 
     // At this point we have the property_id and "owner"
-    
+
 
     if (results.length == 0 || !results[0].json_build_object.business_owners) {
       // No businesses found, search for owner address instead
@@ -113,10 +115,10 @@ export class AppService {
       const ownerStringNoLLC = ownerString.replace(' LLC', '')
       const keys = [ownerStringNoLLC, ownerString, shortened_address]
       let property_results = await this.searchPropertyOwnersNoBusiness(dataSource, keys)
-        
+
       if (property_results.length == 0) {
         return {
-          type: 'no-landlord', 
+          type: 'no-landlord',
           property
         }
       } else {
@@ -142,7 +144,7 @@ export class AppService {
     const queryRunner = dataSource.createQueryRunner()
     await queryRunner.connect()
     await queryRunner.manager.query(`SET pg_trgm.similarity_threshold = 0.8;`)
-    const result =  await queryRunner.manager.query(searchBusinessQuery, [ownerString])
+    const result = await queryRunner.manager.query(searchBusinessQuery, [ownerString])
     await queryRunner.release()
     return result;
 
@@ -159,7 +161,7 @@ export class AppService {
     const last_name = name.last
 
     return await dataSource.query(
-    `WITH found_names AS (
+      `WITH found_names AS (
         SELECT *
         FROM business_names
         WHERE 
@@ -207,7 +209,7 @@ export class AppService {
   async searchPropertyOwnersNoBusiness(dataSource: DataSource, keys: string[]) {
     return await dataSource.query(`			
     WITH owned_addresses AS (
-      SELECT DISTINCT a.*, po.owner
+      SELECT DISTINCT a.*, po.owner, po.market_value
           FROM property_owners po
         LEFT JOIN addresses a ON po.property_id = a.property_id
       WHERE 
@@ -219,75 +221,127 @@ export class AppService {
         ) AND
           a.unit IS NULL
       ),
-    unit_counts AS (
-      SELECT jsonb_object_agg(units."property_id", "c") as unit_count_map
-      FROM
-      (
-        SELECT ad.property_id, COUNT(ad) as c
-        FROM addresses ad
-        WHERE EXISTS(SELECT * FROM owned_addresses WHERE property_id = ad.property_id) AND ad.unit IS NOT NULL
-        GROUP BY ad.property_id
-      ) units
-      LIMIT 1
-    )
-    ,
-      address_locations AS (
-          SELECT DISTINCT l.*
-          FROM owned_addresses a
-          LEFT JOIN locations l ON l.property_id = a.property_id
-          WHERE l.property_id is NOT NULL
+      market_value_sum AS (
+        SELECT SUM(values.market_value)
+        FROM (SELECT DISTINCT ON (market_value) market_value FROM owned_addresses) AS values
       ),
-    eviction_data AS (
-      SELECT DISTINCT(e.*)
-      FROM (
-        --SELECT business_name FROM related_businesses 
-  -- 			UNION 
-  -- 			SELECT owner from owned_addresses
-  -- 			UNION
-  -- 			SELECT bn_name from related_businesses
-  -- 			UNION
-  -- 			SELECT bn2_name from related_businesses
-        --UNION
-        SELECT DISTINCT (owner) as name from owned_addresses
-      ) rb
-      INNER JOIN evicting_landlords el ON similarity(el.landlord, rb.name) > .8
-      JOIN evictions e ON el.case_code = e.case_code
-      WHERE e.case_code is NOT NULL
-    ),
-    owned_addresses_result AS (
-      SELECT jsonb_agg(DISTINCT(a)) as addresses_object
-      FROM owned_addresses a
-      LIMIT 1
-    ),
-    locations_result AS (
-      SELECT jsonb_agg(DISTINCT(l)) as locations_object
-      FROM address_locations l
-      LIMIT 1
-    ),
-    eviction_result AS (
-      SELECT COALESCE(jsonb_agg(DISTINCT(ed)) FILTER (WHERE case_code IS NOT NULL), '[]') as evictions_object
-      FROM eviction_data ed
-      LIMIT 1
-    )
-    SELECT json_build_object(
-          'business_owner', NULL,
-          'related_businesses', NULL,
-          'owned_addresses', ar.addresses_object,
-          'locations', lr.locations_object,
-          'hierarchy_nodes', NULL,
-          'evictions', er.evictions_object,
-          'unit_counts', uc.unit_count_map,
-          'businesses_with_same_owners', NULL
+        unit_counts AS (
+          SELECT jsonb_object_agg(units."property_id", "c") as unit_count_map
+          FROM
+          (
+            SELECT ad.property_id, COUNT(ad) as c
+            FROM addresses ad
+            WHERE EXISTS(SELECT * FROM owned_addresses WHERE property_id = ad.property_id) AND ad.unit IS NOT NULL
+            GROUP BY ad.property_id
+          ) units
+          LIMIT 1
+        ),
+          address_locations AS (
+              SELECT DISTINCT l.*
+              FROM owned_addresses a
+              LEFT JOIN locations l ON l.property_id = a.property_id
+              WHERE l.property_id is NOT NULL
+          ),
+        eviction_data AS (
+          SELECT DISTINCT(e.*)
+          FROM (
+            --SELECT business_name FROM related_businesses 
+      -- 			UNION 
+      -- 			SELECT owner from owned_addresses
+      -- 			UNION
+      -- 			SELECT bn_name from related_businesses
+      -- 			UNION
+      -- 			SELECT bn2_name from related_businesses
+            --UNION
+            SELECT DISTINCT (owner) as name from owned_addresses
+          ) rb
+          INNER JOIN evicting_landlords el ON similarity(el.landlord, rb.name) > .8
+          JOIN evictions e ON el.case_code = e.case_code
+          WHERE e.case_code is NOT NULL
+        ),
+        owned_addresses_result AS (
+          SELECT jsonb_agg(DISTINCT(a)) as addresses_object
+          FROM owned_addresses a
+          LIMIT 1
+        ),
+        locations_result AS (
+          SELECT jsonb_agg(DISTINCT(l)) as locations_object
+          FROM address_locations l
+          LIMIT 1
+        ),
+        eviction_result AS (
+          SELECT COALESCE(jsonb_agg(DISTINCT(ed)) FILTER (WHERE case_code IS NOT NULL), '[]') as evictions_object
+          FROM eviction_data ed
+          LIMIT 1
       )
-      FROM owned_addresses_result ar
+      SELECT json_build_object(
+        'business_owners', NULL,
+        'related_businesses', NULL,
+        'owned_addresses', ar.addresses_object,
+        'locations', lr.locations_object,
+        'hierarchy_nodes', NULL,
+        'evictions', er.evictions_object,
+        'unit_counts', uc.unit_count_map,
+        'businesses_with_same_owners', NULL,
+        'market_value_sum', market_value_sum.sum
+      )
+          FROM owned_addresses_result ar
       LEFT JOIN locations_result lr ON true
-    LEFT JOIN eviction_result er ON true
-    LEFT JOIN unit_counts uc ON true
-      GROUP BY er.evictions_object, lr.locations_object, ar.addresses_object, uc.unit_count_map
-    LIMIT 1;
-
+      LEFT JOIN eviction_result er ON true
+      LEFT JOIN unit_counts uc ON true
+      LEFT JOIN market_value_sum ON true
+      GROUP BY lr.locations_object, ar.addresses_object, uc.unit_count_map, er.evictions_object,market_value_sum.sum
+      LIMIT 1;
   `, keys);
   }
+
+
+  async submitReview(ip: string, review: Review, dataSource: DataSource) {
+    const count = await dataSource.query(`SELECT COUNT(*) FROM reviews WHERE ip = $1`, [ip])
+
+    if (review.answersSelected.length > 10 || review.landlordList.length > 50) {
+      return
+    }
+
+    if (review.reviewText.length > 1000 || review.address.length > 100) {
+      return
+    }
+
+    if (review.answersSelected.includes(null)) {
+      console.log('invalid input')
+      return
+    }
+
+    if (count[0].count > 99) {
+      console.log('attempting to insert more than 99 reviews for the same ip: ', ip)
+      return
+    }
+
+    const row = await dataSource.query(`
+      INSERT INTO reviews(
+          ip, 
+          review_text, 
+          selected_answers,
+          address) 
+      VALUES($1, $2, $3, $4)
+      ON CONFLICT DO NOTHING
+      RETURNING *`, [ip, review.reviewText, review.answersSelected, review.address])
+    console.log(row)
+    if (row && row[0]) {
+      for (const landlord of review.landlordList) {
+        await dataSource.query(`
+      INSERT INTO landlord_reviews(
+          review_id, 
+          name, 
+          origin) 
+      VALUES($1, $2, $3)
+      ON CONFLICT DO NOTHING
+      RETURNING *`, [row[0].id, landlord.name, landlord.origin])
+      }
+    }
+
+  }
+
 
 }
 
