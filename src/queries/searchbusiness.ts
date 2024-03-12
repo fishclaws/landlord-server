@@ -7,8 +7,11 @@ business_owner AS (
   SELECT *
   FROM businesses
   JOIN search_terms st ON TRUE
-  WHERE replace(replace(replace(business_name, '.', ''), ',', ''), '''', '') % st.search_term
+  WHERE 
+    replace(replace(replace(business_name, '.', ''), ',', ''), '''', '') % st.search_term OR
+    st.search_term =ANY(name_history)
   ORDER BY (1 - (replace(replace(replace(business_name, '.', ''), ',', ''), '''', '') <-> st.search_term)) DESC
+  
 ),
 chains AS (
   SELECT jsonb_agg(levels) as levels, top_reg_num, top_last_name, top_first_name FROM (
@@ -165,17 +168,18 @@ owned_addresses AS (
     SELECT DISTINCT a.*, po.owner, po.market_value
     FROM (
         SELECT DISTINCT ON (business_name) * FROM (
-            SELECT matched_property_owner, business_name
+            SELECT matched_property_owner, business_name, name_history
             FROM related_businesses
             UNION
-            SELECT matched_property_owner, business_name
+            SELECT matched_property_owner, business_name, name_history
             FROM businesses_with_same_owners_1
         )
     ) related
     LEFT JOIN property_owners po ON
-    related.matched_property_owner = po.owner OR
+    --related.matched_property_owner = po.owner OR
 	--similarity(replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', ''),po.owner) > .95
-    replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', '') = po.owner --OR 
+    replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', '') % po.owner OR
+    po.owner =ANY(name_history) 
     --SIMILARITY(replace(replace(replace(related.business_name, '.', ''), ',', ''), '''', ''), po.owner) > 0.85
     LEFT JOIN addresses a ON po.property_id = a.property_id
     WHERE a.unit IS NULL

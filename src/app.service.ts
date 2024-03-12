@@ -14,12 +14,26 @@ export class AppService {
     query = query.replace('\'', '')
 
     var addresses = await dataSource.query(
-      `SELECT * FROM (
-        SELECT *, SIMILARITY(address_full,'${query}') as sim  FROM addresses 
-          WHERE starts_with(property_id, 'R') 
-          ORDER BY sim DESC LIMIT 5) as addresses
-       JOIN property_owners po ON addresses.property_id = po.property_id
-       JOIN locations l ON addresses.property_id = l.property_id`
+      `SELECT *
+      FROM
+        (SELECT *,
+            SIMILARITY(ADDRESS_FULL,$1) AS SIM
+          FROM ADDRESSES
+          WHERE STARTS_WITH(PROPERTY_ID,'R')
+          ORDER BY SIM DESC
+          LIMIT 5) AS ADDRESSES
+      JOIN PROPERTY_OWNERS PO ON ADDRESSES.PROPERTY_ID = PO.PROPERTY_ID
+      JOIN LOCATIONS L ON ADDRESSES.PROPERTY_ID = L.PROPERTY_ID
+      JOIN
+        LATERAL (
+          SELECT JSONB_AGG(
+            JSONB_BUILD_OBJECT(
+              'id', r.id,
+              'selected_answers', r.selected_answers,
+                    'review_text', r.review_text  
+            )) as reviews
+          FROM REVIEWS R
+          WHERE R.PROPERTY_ID = ADDRESSES.PROPERTY_ID ) AS REVIEWS ON TRUE`, [query]
     )
 
 
@@ -322,10 +336,11 @@ export class AppService {
           ip, 
           review_text, 
           selected_answers,
-          address) 
-      VALUES($1, $2, $3, $4)
+          address,
+          property_id) 
+      VALUES($1, $2, $3, $4, $5)
       ON CONFLICT DO NOTHING
-      RETURNING *`, [ip, review.reviewText, review.answersSelected, review.address])
+      RETURNING *`, [ip, review.reviewText, review.answersSelected, review.address, review.propertyId])
     console.log(row)
     if (row && row[0]) {
       for (const landlord of review.landlordList) {

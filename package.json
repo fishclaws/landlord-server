@@ -29,6 +29,8 @@
     "@universe/address-parser": "^3.2.0",
     "addresser": "^1.1.20",
     "cache-manager": "^5.4.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
     "parse-address-string": "^0.0.3",
     "parse-full-name": "^1.2.6",
     "pg": "^8.11.3",
